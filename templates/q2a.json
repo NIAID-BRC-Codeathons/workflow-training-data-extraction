@@ -1,0 +1,178 @@
+{
+  "annotationInstructions": {
+    "objective": "Create a clear, step-by-step annotation that mirrors your own problem-solving thought process. This annotation will be given to an expert LLM to guide a student LLM to solve the problem, thereby efficiently generating training data.",
+
+    "workflow": [
+      {
+        "workflowStep": 1,
+        "name": "Present the Problem",
+        "description": "Clearly state the problem without ambiguity",
+        "input": {
+          "type": "raw_problem",
+          "format": "text only for now",
+          "source": "Problem statement from source material"
+        },
+        "context": {
+          "purpose": "Establish clear understanding of the problem before annotation",
+          "constraints": ["Text-based problems only", "No ambiguity allowed"]
+        },
+        "output": {
+          "type": "clear_problem_statement",
+          "format": "Unambiguous text description"
+        }
+      },
+
+      {
+        "workflowStep": 2,
+        "name": "Break Down Your Thought Process",
+        "description": "Divide your thought process into steps and label each step to create a clear and logical flow",
+        "input": {
+          "type": "problem_statement",
+          "source": "Output from workflow step 1",
+          "requirements": ["Clear problem understanding", "Expert's solution approach"]
+        },
+        "context": {
+          "purpose": "Create a logical sequence of reasoning steps",
+          "approach": "Think through how you would solve the problem step-by-step",
+          "labeling": "Use Step 1, Step 2, ... for clear flow"
+        },
+        "output": {
+          "type": "step_sequence",
+          "format": "Numbered list of logical steps"
+        }
+      },
+
+      {
+        "workflowStep": 3,
+        "name": "Annotate Each Step with Details",
+        "description": "For each step in your thought process, provide comprehensive annotations",
+        "input": {
+          "type": "step_sequence",
+          "source": "Output from workflow step 2",
+          "requirements": ["List of all problem-solving steps"]
+        },
+        "context": {
+          "purpose": "Create rich training data by documenting the complete thought process for each step",
+          "annotation_method": "Apply the annotation template to each step"
+        },
+        "substeps": [
+          {
+            "substep": "3.1",
+            "component": "Step Description",
+            "description": "Clearly state the task or question for this step",
+            "input": {
+              "type": "current_step_context",
+              "requirements": ["Understanding of what this step aims to accomplish"]
+            },
+            "context": {
+              "purpose": "Define the specific objective of this reasoning step",
+              "clarity": "Should be actionable and specific"
+            },
+            "example": "Read the problem to identify inputs, allowed operations, and outputs.",
+            "output": {
+              "type": "step_description_text",
+              "format": "Clear, actionable statement"
+            }
+          },
+
+          {
+            "substep": "3.2",
+            "component": "Answer",
+            "description": "Provide the ideal answer for the step",
+            "input": {
+              "type": "step_solution",
+              "requirements": ["Expert's knowledge of the correct answer for this step"]
+            },
+            "context": {
+              "purpose": "Provide the ground truth answer that the student LLM should reach",
+              "format_types": ["number", "expression", "statement"]
+            },
+            "example": "The array can be reduced to all zeros in at most 2 operations.",
+            "output": {
+              "type": "step_answer",
+              "format": "Number, expression, or statement"
+            }
+          },
+
+          {
+            "substep": "3.3",
+            "component": "Substeps",
+            "description": "If the step is complex, break it down into smaller parts",
+            "input": {
+              "type": "step_complexity_assessment",
+              "requirements": ["Analysis of whether the step needs further breakdown"]
+            },
+            "context": {
+              "purpose": "Make complex steps more manageable by breaking them into atomic tasks",
+              "when_to_use": "Use when a step involves multiple distinct actions",
+              "formatting": "Use bullet points or nested numbering"
+            },
+            "example": [
+              "Identify the input for each test case",
+              "Determine the allowed operations on the array",
+              "Outline the expected output for each case"
+            ],
+            "output": {
+              "type": "substep_list",
+              "format": "Bulleted or nested numbered list",
+              "optional": true
+            }
+          },
+
+          {
+            "substep": "3.4",
+            "component": "Hints",
+            "description": "Provide 1-3 hints to encourage the model to think through the step before revealing the answer",
+            "input": {
+              "type": "step_context_and_answer",
+              "requirements": [
+                "Understanding of the step's objective",
+                "Knowledge of the correct answer",
+                "Common misconceptions or thinking patterns"
+              ]
+            },
+            "context": {
+              "purpose": "Guide the student LLM toward the answer through Socratic questioning",
+              "quantity": "1-3 hints per step",
+              "approach": "Questions that prompt reflection and reasoning"
+            },
+            "examples": [
+              "What happens if you select the entire array?",
+              "Is it possible to reduce the array to zeros in fewer operations?"
+            ],
+            "output": {
+              "type": "hint_list",
+              "format": "1-3 question-based hints",
+              "count": {
+                "min": 1,
+                "max": 3
+              }
+            }
+          }
+        ],
+        "output": {
+          "type": "fully_annotated_steps",
+          "format": "List of steps with description, answer, substeps (optional), and hints"
+        }
+      }
+    ],
+
+    "finalOutput": {
+      "type": "complete_annotation",
+      "structure": {
+        "problem": "Clear problem statement",
+        "steps": [
+          {
+            "stepNumber": "integer",
+            "description": "string",
+            "answer": "string | number | expression",
+            "substeps": "array (optional)",
+            "hints": "array (1-3 items)"
+          }
+        ]
+      },
+      "purpose": "Training data for student LLM guided by expert LLM",
+      "usageContext": "Expert LLM uses this annotation to guide student LLM through problem-solving process"
+    }
+  }
+}
