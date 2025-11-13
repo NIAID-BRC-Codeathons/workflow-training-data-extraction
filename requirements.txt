@@ -1,0 +1,5 @@
+numpy
+rich
+openai
+requests
+dotenv
