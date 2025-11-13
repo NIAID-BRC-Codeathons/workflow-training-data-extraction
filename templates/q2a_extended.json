@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Question-to-Answer Workflow Training Data (Extended)",
+  "description": "Extended schema for generating LLM training data from scientific papers, including tool specifications and pedagogical hints",
+
+  "annotationInstructions": {
+    "objective": "Create a clear, step-by-step annotation that mirrors your own problem-solving thought process. This annotation will be given to an expert LLM to guide a student LLM to solve the problem, thereby efficiently generating training data."
+  },
+
+  "paper_source": {
+    "title": "Title of the scientific paper",
+    "authors": ["Author 1", "Author 2"],
+    "doi": "10.xxxx/xxxxx",
+    "pdf_path": "file://path/to/paper.pdf",
+    "extraction_timestamp": "ISO 8601 timestamp"
+  },
+
+  "objective": "High-level research question or task to be accomplished",
+
+  "subquestions": [
+    "Specific subquestion 1 that breaks down the main objective",
+    "Specific subquestion 2",
+    "Specific subquestion 3"
+  ],
+
+  "workflow": [
+    {
+      "workflowStep": 1,
+      "name": "Present the Problem",
+      "description": "Clearly state the problem without ambiguity",
+      "task": "Task ID or subquestion being addressed",
+
+      "substeps": [
+        {
+          "substep": "1a",
+          "description": "Detailed substep description",
+          "answer": "Expected outcome for this substep",
+          "hint": "Pedagogical hint to guide thinking"
+        }
+      ],
+
+      "hints": [
+        "Hint 1: What is the first thing you should check?",
+        "Hint 2: What preprocessing is mentioned in the methods?",
+        "Hint 3: How would you validate the input data?"
+      ],
+
+      "tool": {
+        "name": "Tool name (e.g., BLAST, FastQC, DESeq2)",
+        "version": "2.13.0 or 'latest' or 'unspecified'",
+        "uri": "bio.tools/blast or docker://ncbi/blast:2.13.0",
+        "container": "docker://ncbi/blast:2.13.0",
+        "conda_package": "bioconda::blast=2.13.0",
+        "parameters": {
+          "param1": "value1",
+          "param2": "value2"
+        },
+        "confidence": "high|medium|low - how confident we are in tool identification"
+      },
+
+      "inputs": [
+        {
+          "name": "Input dataset name",
+          "type": "file",
+          "format": "fastq",
+          "uri": "file://path/to/input.fastq or sra://SRR123456",
+          "md5sum": "optional_md5_checksum_of_file",
+          "description": "Description of what this input represents",
+          "source": "Where this data comes from (paper, public DB, etc.)",
+          "required": true,
+          "confidence": "high|medium|low - how confident we are about this input"
+        }
+      ],
+
+      "outputs": [
+        {
+          "name": "Output file name",
+          "type": "file",
+          "format": "bam",
+          "uri": "file://path/to/output.bam",
+          "md5sum": "optional_md5_checksum_of_file",
+          "description": "Description of what this output represents",
+          "validation_criteria": "What makes this output valid/correct"
+        }
+      ],
+
+      "grader": {
+        "type": "output_check|statistical_test|visual_inspection|custom",
+        "validation": {
+          "method": "Check file exists and meets criteria",
+          "expected": "Description of expected result",
+          "criteria": [
+            "File size > 1MB",
+            "Contains header line",
+            "At least 100 sequences"
+          ]
+        },
+        "scoring": {
+          "method": "pass_fail|numeric|rubric",
+          "points": 10,
+          "rubric": "Detailed scoring rubric"
+        }
+      },
+
+      "confidence_score": 0.85,
+      "gaps": [
+        {
+          "type": "missing_tool_version|missing_parameter|missing_input|unclear_output",
+          "description": "What information is missing or uncertain",
+          "suggestion": "How to handle this gap"
+        }
+      ]
+    }
+  ],
+
+  "results": {
+    "status": "completed|in_progress|failed|not_started",
+    "completionTime": "ISO 8601 timestamp",
+    "answer": "Final answer or output generated from the workflow",
+    "outputs": [
+      {
+        "name": "Final output name",
+        "type": "file",
+        "format": "json|csv|pdf",
+        "uri": "file://path/to/result.json",
+        "md5sum": "optional_md5_checksum",
+        "description": "What this final output represents"
+      }
+    ],
+    "validation": {
+      "passed": true,
+      "score": 95,
+      "feedback": "Detailed feedback on the execution"
+    }
+  },
+
+  "gaps_summary": {
+    "total_gaps": 5,
+    "critical_gaps": 1,
+    "gap_types": {
+      "missing_tool_version": 2,
+      "missing_input_file": 1,
+      "missing_parameter": 2
+    },
+    "actionable_steps": [
+      "Verify tool versions from paper's methods section",
+      "Check supplementary materials for data accessions",
+      "Consult tool documentation for default parameters"
+    ]
+  },
+
+  "confidence_metrics": {
+    "overall_confidence": 0.75,
+    "question_extraction": 0.90,
+    "workflow_completeness": 0.80,
+    "tool_identification": 0.70,
+    "parameter_accuracy": 0.45,
+    "input_output_mapping": 0.75
+  },
+
+  "metadata": {
+    "createdBy": "Annotator Name or sophia_pdf_analyzer.py",
+    "createdAt": "ISO 8601 timestamp",
+    "version": "2.0",
+    "extraction_method": "automated|semi-automated|manual",
+    "llm_model": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "review_status": "needs_review|reviewed|validated",
+    "reviewer": "Expert name or ID",
+    "reviewed_at": "ISO 8601 timestamp"
+  }
+}
