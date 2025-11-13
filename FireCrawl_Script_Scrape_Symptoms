@@ -1,0 +1,594 @@
+"""
+Outbreak Symptom Trend Analysis
+Uses FireCrawl to find recent measles and monkeypox outbreaks,
+then analyzes Google Trends data for fever and rash symptoms.
+"""
+
+import signal
+from typing import List, Dict, Any, Tuple
+from datetime import datetime, timedelta
+import pandas as pd
+from firecrawl import FirecrawlApp
+from pytrends.request import TrendReq
+import time
+import json
+
+# Configuration
+FIRECRAWL_CONFIG = {
+    "api_key": "fc-9b719a6c93df4442865d2eace08333d0"  # Replace with your API key
+}
+
+# Global list to track visited URLs
+visited_urls = []
+
+# Timeout handler for searches
+def timeout_handler(signum, frame):
+    raise TimeoutError("Search operation timed out")
+
+
+def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = True) -> List[Dict[str, Any]]:
+    """
+    Execute a search query using Firecrawl
+    Args:
+        query: The search query
+        num_results: Number of results to return
+        use_timeout_signal: Whether to use signal-based timeout (only works in main thread)
+    Returns:
+        List of search results with content
+    """
+    print(f"\n🔍 Searching with Firecrawl: {query}")
+    results = []
+    
+    # Initialize the Firecrawl client
+    firecrawl_app = FirecrawlApp(api_key=FIRECRAWL_CONFIG["api_key"])
+    
+    try:
+        # Only use signal-based timeout in the main thread
+        if use_timeout_signal:
+            # Set timeout handler
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(30)  # 30 second timeout
+        
+        # Execute search with Firecrawl
+        search_response = firecrawl_app.search(
+            query=query,
+            timeout= 30000,
+            limit = num_results,
+            scrape_options = {'formats': ['markdown']}
+            
+        )
+        
+        # Reset alarm if we used it
+        if use_timeout_signal:
+            signal.alarm(0)
+        
+        print(search_response)
+
+        print(search_response.news)
+        print(search_response.web)
+
+        # Get data items based on the response structure
+        if hasattr(search_response, 'data'):
+            data_items = search_response.data
+        elif isinstance(search_response, dict) and 'data' in search_response:
+            data_items = search_response['data']
+        else:
+            print(f"⚠️  Unexpected response format: {type(search_response)}")
+            data_items = []
+            
+        # Check if we have results
+        if not search_response or len(data_items) == 0:
+            print(f"❌ No results found for query: {query}")
+            return []
+        
+        # Process results
+        formatted_results = []
+        
+        for item in data_items:
+            # Extract URL
+            url = item.url if hasattr(item, 'url') else item.get('url', '')
+            
+            # Extract markdown content
+            content = item.markdown if hasattr(item, 'markdown') else item.get('markdown', '')
+            if not content:
+                content = item.content if hasattr(item, 'content') else item.get('content', '')
+            
+            # Get title
+            title = item.title if hasattr(item, 'title') else item.get('title', url)
+            
+            formatted_results.append({
+                "title": title,
+                "url": url,
+                "source": url.split("//")[-1].split("/")[0] if "//" in url else "unknown",
+                "snippet": content[:500] + "..." if len(content) > 500 else content,
+                "content": content,
+                "query": query
+            })
+        
+        print(f"✅ Found {len(formatted_results)} results from Firecrawl")
+        
+        # Track visited URLs globally
+        global visited_urls
+        visited_urls.extend([item["url"] for item in formatted_results if item["url"]])
+        
+        return formatted_results
+        
+    except TimeoutError:
+        print(f"⏱️  Search timed out after 30 seconds: {query}")
+        return []
+    except Exception as e:
+        print(f"❌ Error searching with Firecrawl: {e}")
+        return []
+
+
+def find_outbreak_data(disease: str, timeframe: str = "2024 OR 2025") -> List[Dict[str, Any]]:
+    """
+    Search for recent outbreak announcements for a specific disease
+    """
+    queries = [
+        f"{disease} outbreak {timeframe} United States state",
+        f"{disease} cases reported {timeframe} US state health department",
+        f"CDC {disease} outbreak {timeframe}"
+    ]
+    
+    all_results = []
+    for query in queries:
+        results = execute_search(query, num_results=10)
+        all_results.extend(results)
+        time.sleep(2)  # Be respectful to the API
+    
+    return all_results
+
+
+def extract_outbreak_info(results: List[Dict[str, Any]], disease: str) -> List[Dict[str, Any]]:
+    """
+    Parse outbreak information from search results to extract:
+    - State(s) affected
+    - Date of announcement
+    - Number of cases (if available)
+    """
+    outbreaks = []
+    
+    # US state list for reference
+    us_states = [
+        'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado',
+        'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho',
+        'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana',
+        'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota',
+        'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada',
+        'New Hampshire', 'New Jersey', 'New Mexico', 'New York',
+        'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon',
+        'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota',
+        'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington',
+        'West Virginia', 'Wisconsin', 'Wyoming'
+    ]
+    
+    for result in results:
+        content = result.get('content', '').lower()
+        title = result.get('title', '').lower()
+        
+        # Find mentioned states
+        mentioned_states = [state for state in us_states if state.lower() in content or state.lower() in title]
+        
+        if mentioned_states:
+            outbreak_info = {
+                'disease': disease,
+                'states': mentioned_states,
+                'url': result.get('url', ''),
+                'title': result.get('title', ''),
+                'snippet': result.get('snippet', ''),
+                'content_preview': content[:1000]
+            }
+            outbreaks.append(outbreak_info)
+    
+    return outbreaks
+
+
+def get_nearby_states(state: str) -> List[str]:
+    """
+    Return neighboring states for comparison (simplified mapping)
+    """
+    # Simplified neighbor mapping for major states
+    state_neighbors = {
+        'California': ['Nevada', 'Arizona', 'Oregon'],
+        'Texas': ['Louisiana', 'Oklahoma', 'New Mexico', 'Arkansas'],
+        'Florida': ['Georgia', 'Alabama'],
+        'New York': ['New Jersey', 'Pennsylvania', 'Connecticut', 'Massachusetts'],
+        'Illinois': ['Indiana', 'Wisconsin', 'Iowa', 'Missouri'],
+        'Pennsylvania': ['New York', 'New Jersey', 'Ohio', 'Maryland'],
+        'Ohio': ['Pennsylvania', 'Indiana', 'Michigan', 'Kentucky'],
+        'Georgia': ['Florida', 'Alabama', 'South Carolina', 'Tennessee'],
+        'North Carolina': ['South Carolina', 'Virginia', 'Tennessee', 'Georgia'],
+        'Michigan': ['Ohio', 'Indiana', 'Wisconsin'],
+        'Washington': ['Oregon', 'Idaho'],
+        'Arizona': ['California', 'Nevada', 'New Mexico'],
+        'Massachusetts': ['New Hampshire', 'Rhode Island', 'Connecticut', 'New York'],
+        'Indiana': ['Illinois', 'Ohio', 'Michigan', 'Kentucky'],
+        'Tennessee': ['Kentucky', 'Virginia', 'North Carolina', 'Georgia', 'Alabama', 'Mississippi', 'Arkansas', 'Missouri'],
+        'Missouri': ['Illinois', 'Iowa', 'Kansas', 'Oklahoma', 'Arkansas', 'Tennessee', 'Kentucky'],
+        'Maryland': ['Pennsylvania', 'Delaware', 'Virginia', 'West Virginia'],
+        'Wisconsin': ['Michigan', 'Illinois', 'Iowa', 'Minnesota'],
+        'Colorado': ['Wyoming', 'Nebraska', 'Kansas', 'Oklahoma', 'New Mexico', 'Utah'],
+        'Minnesota': ['Wisconsin', 'Iowa', 'South Dakota', 'North Dakota'],
+    }
+    
+    return state_neighbors.get(state, [])
+
+
+def analyze_google_trends(
+    symptoms: List[str],
+    states: List[str],
+    end_date: datetime,
+    days_before: int = 7
+) -> pd.DataFrame:
+    """
+    Analyze Google Trends data for symptoms in specific states
+    
+    Args:
+        symptoms: List of symptoms to track (e.g., ['fever', 'rash'])
+        states: List of US states (2-letter codes or full names)
+        end_date: End date for the analysis (typically outbreak announcement date)
+        days_before: Number of days before end_date to analyze
+    
+    Returns:
+        DataFrame with trend data
+    """
+    print(f"\n📊 Analyzing Google Trends for {symptoms} in {states}")
+    print(f"   Period: {days_before} days before {end_date.strftime('%Y-%m-%d')}")
+    
+    # Convert state names to 2-letter codes if needed
+    state_code_map = {
+        'Alabama': 'US-AL', 'Alaska': 'US-AK', 'Arizona': 'US-AZ', 'Arkansas': 'US-AR',
+        'California': 'US-CA', 'Colorado': 'US-CO', 'Connecticut': 'US-CT', 'Delaware': 'US-DE',
+        'Florida': 'US-FL', 'Georgia': 'US-GA', 'Hawaii': 'US-HI', 'Idaho': 'US-ID',
+        'Illinois': 'US-IL', 'Indiana': 'US-IN', 'Iowa': 'US-IA', 'Kansas': 'US-KS',
+        'Kentucky': 'US-KY', 'Louisiana': 'US-LA', 'Maine': 'US-ME', 'Maryland': 'US-MD',
+        'Massachusetts': 'US-MA', 'Michigan': 'US-MI', 'Minnesota': 'US-MN', 'Mississippi': 'US-MS',
+        'Missouri': 'US-MO', 'Montana': 'US-MT', 'Nebraska': 'US-NE', 'Nevada': 'US-NV',
+        'New Hampshire': 'US-NH', 'New Jersey': 'US-NJ', 'New Mexico': 'US-NM', 'New York': 'US-NY',
+        'North Carolina': 'US-NC', 'North Dakota': 'US-ND', 'Ohio': 'US-OH', 'Oklahoma': 'US-OK',
+        'Oregon': 'US-OR', 'Pennsylvania': 'US-PA', 'Rhode Island': 'US-RI', 'South Carolina': 'US-SC',
+        'South Dakota': 'US-SD', 'Tennessee': 'US-TN', 'Texas': 'US-TX', 'Utah': 'US-UT',
+        'Vermont': 'US-VT', 'Virginia': 'US-VA', 'Washington': 'US-WA', 'West Virginia': 'US-WV',
+        'Wisconsin': 'US-WI', 'Wyoming': 'US-WY'
+    }
+    
+    # Calculate date range
+    start_date = end_date - timedelta(days=days_before)
+    timeframe = f"{start_date.strftime('%Y-%m-%d')} {end_date.strftime('%Y-%m-%d')}"
+    
+    # Initialize pytrends
+    pytrends = TrendReq(hl='en-US', tz=360)
+    
+    all_data = []
+    
+    for state in states:
+        # Convert to state code if needed
+        state_code = state_code_map.get(state, state)
+        if not state_code.startswith('US-'):
+            state_code = f"US-{state_code}"
+        
+        try:
+            print(f"   Fetching data for {state} ({state_code})...")
+            
+            # Build payload for this state
+            pytrends.build_payload(
+                symptoms,
+                cat=0,
+                timeframe=timeframe,
+                geo=state_code,
+                gprop=''
+            )
+            
+            # Get interest over time
+            interest_df = pytrends.interest_over_time()
+            
+            if not interest_df.empty:
+                # Remove 'isPartial' column if present
+                if 'isPartial' in interest_df.columns:
+                    interest_df = interest_df.drop('isPartial', axis=1)
+                
+                # Add state information
+                interest_df['state'] = state
+                interest_df['state_code'] = state_code
+                interest_df.reset_index(inplace=True)
+                
+                all_data.append(interest_df)
+            else:
+                print(f"   ⚠️  No data available for {state}")
+            
+            # Rate limiting
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"   ❌ Error fetching data for {state}: {e}")
+            continue
+    
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        print(f"✅ Successfully collected trend data for {len(states)} states")
+        return combined_df
+    else:
+        print("❌ No trend data collected")
+        return pd.DataFrame()
+
+
+def calculate_trend_metrics(df: pd.DataFrame, symptoms: List[str]) -> Dict[str, Any]:
+    """
+    Calculate key metrics from trend data:
+    - Average search volume
+    - Rate of increase (slope)
+    - Peak values
+    """
+    metrics = {}
+    
+    for state in df['state'].unique():
+        state_data = df[df['state'] == state].copy()
+        state_metrics = {'state': state}
+        
+        for symptom in symptoms:
+            if symptom in state_data.columns:
+                values = state_data[symptom].values
+                
+                # Calculate metrics
+                state_metrics[f'{symptom}_avg'] = values.mean()
+                state_metrics[f'{symptom}_max'] = values.max()
+                state_metrics[f'{symptom}_min'] = values.min()
+                
+                # Calculate rate of increase (simple linear approximation)
+                if len(values) > 1:
+                    rate = (values[-1] - values[0]) / len(values)
+                    state_metrics[f'{symptom}_rate'] = rate
+                else:
+                    state_metrics[f'{symptom}_rate'] = 0
+        
+        metrics[state] = state_metrics
+    
+    return metrics
+
+
+def compare_outbreak_vs_control(
+    outbreak_states: List[str],
+    control_states: List[str],
+    symptoms: List[str],
+    outbreak_date: datetime,
+    days_before: int = 7
+) -> Dict[str, Any]:
+    """
+    Compare symptom trends between outbreak and control states
+    """
+    print(f"\n🔬 Comparing outbreak vs control states")
+    print(f"   Outbreak states: {outbreak_states}")
+    print(f"   Control states: {control_states}")
+    
+    # Get trends for outbreak states
+    print("\n📈 Fetching data for OUTBREAK states...")
+    outbreak_trends = analyze_google_trends(symptoms, outbreak_states, outbreak_date, days_before)
+    
+    # Get trends for control states
+    print("\n📈 Fetching data for CONTROL states...")
+    control_trends = analyze_google_trends(symptoms, control_states, outbreak_date, days_before)
+    
+    # Calculate metrics
+    outbreak_metrics = calculate_trend_metrics(outbreak_trends, symptoms)
+    control_metrics = calculate_trend_metrics(control_trends, symptoms)
+    
+    # Prepare comparison
+    comparison = {
+        'outbreak_states': outbreak_states,
+        'control_states': control_states,
+        'outbreak_date': outbreak_date.strftime('%Y-%m-%d'),
+        'analysis_period_days': days_before,
+        'symptoms': symptoms,
+        'outbreak_metrics': outbreak_metrics,
+        'control_metrics': control_metrics,
+        'outbreak_trends_data': outbreak_trends.to_dict('records') if not outbreak_trends.empty else [],
+        'control_trends_data': control_trends.to_dict('records') if not control_trends.empty else []
+    }
+    
+    return comparison
+
+
+def analyze_disease_outbreak(disease: str, symptoms: List[str] = ['fever', 'rash']) -> Dict[str, Any]:
+    """
+    Complete pipeline for analyzing a disease outbreak
+    """
+    print(f"\n{'='*80}")
+    print(f"🦠 ANALYZING {disease.upper()} OUTBREAK")
+    print(f"{'='*80}")
+    
+    # Step 1: Find outbreak data
+    print(f"\n📡 Step 1: Searching for {disease} outbreak information...")
+    outbreak_results = find_outbreak_data(disease)
+    
+    if not outbreak_results:
+        print(f"❌ No outbreak data found for {disease}")
+        return {'disease': disease, 'status': 'no_data_found'}
+    
+    # Step 2: Extract outbreak information
+    print(f"\n📋 Step 2: Extracting outbreak details...")
+    outbreaks = extract_outbreak_info(outbreak_results, disease)
+    
+    if not outbreaks:
+        print(f"❌ Could not extract outbreak state information for {disease}")
+        return {'disease': disease, 'status': 'no_states_identified'}
+    
+    # Display found outbreaks
+    print(f"\n✅ Found {len(outbreaks)} potential outbreak reports:")
+    for i, outbreak in enumerate(outbreaks[:5], 1):  # Show first 5
+        print(f"\n   {i}. States: {outbreak['states']}")
+        print(f"      Title: {outbreak['title'][:100]}...")
+        print(f"      URL: {outbreak['url']}")
+    
+    # Get unique outbreak states
+    outbreak_states = list(set([state for outbreak in outbreaks for state in outbreak['states']]))
+    print(f"\n🎯 Identified outbreak states: {outbreak_states}")
+    
+    # Step 3: Get control states (neighbors)
+    control_states = []
+    for state in outbreak_states[:3]:  # Use first 3 outbreak states
+        neighbors = get_nearby_states(state)
+        # Only add neighbors that are NOT in outbreak states
+        control_states.extend([n for n in neighbors if n not in outbreak_states])
+    
+    control_states = list(set(control_states))[:5]  # Limit to 5 control states
+    print(f"🎯 Selected control states: {control_states}")
+    
+    # Step 4: Analyze trends
+    # Use current date minus a few days as proxy for "outbreak announcement"
+    outbreak_date = datetime.now() - timedelta(days=7)
+    
+    print(f"\n📊 Step 3: Analyzing Google Trends data...")
+    comparison = compare_outbreak_vs_control(
+        outbreak_states[:5],  # Limit to 5 outbreak states
+        control_states,
+        symptoms,
+        outbreak_date,
+        days_before=7
+    )
+    
+    # Add outbreak details to comparison
+    comparison['disease'] = disease
+    comparison['outbreak_details'] = outbreaks[:5]
+    
+    return comparison
+
+
+def generate_report(measles_results: Dict[str, Any], monkeypox_results: Dict[str, Any]) -> str:
+    """
+    Generate a comprehensive analysis report
+    """
+    report = []
+    report.append("="*80)
+    report.append("MEASLES VS MONKEYPOX: SYMPTOM SEARCH TREND ANALYSIS")
+    report.append("="*80)
+    report.append(f"\nReport Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report.append(f"\nAnalysis Period: 7 days prior to outbreak announcement")
+    report.append(f"Symptoms Analyzed: FEVER and RASH")
+    
+    # Measles section
+    report.append("\n" + "="*80)
+    report.append("MEASLES OUTBREAK ANALYSIS")
+    report.append("="*80)
+    
+    if measles_results.get('status') in ['no_data_found', 'no_states_identified']:
+        report.append(f"\n⚠️  Status: {measles_results.get('status', 'unknown')}")
+    else:
+        report.append(f"\nOutbreak States: {', '.join(measles_results.get('outbreak_states', []))}")
+        report.append(f"Control States: {', '.join(measles_results.get('control_states', []))}")
+        
+        # Metrics summary
+        report.append("\n--- OUTBREAK STATES METRICS ---")
+        for state, metrics in measles_results.get('outbreak_metrics', {}).items():
+            report.append(f"\n{state}:")
+            report.append(f"  Fever - Avg: {metrics.get('fever_avg', 0):.2f}, Max: {metrics.get('fever_max', 0)}, Rate: {metrics.get('fever_rate', 0):.2f}")
+            report.append(f"  Rash  - Avg: {metrics.get('rash_avg', 0):.2f}, Max: {metrics.get('rash_max', 0)}, Rate: {metrics.get('rash_rate', 0):.2f}")
+        
+        report.append("\n--- CONTROL STATES METRICS ---")
+        for state, metrics in measles_results.get('control_metrics', {}).items():
+            report.append(f"\n{state}:")
+            report.append(f"  Fever - Avg: {metrics.get('fever_avg', 0):.2f}, Max: {metrics.get('fever_max', 0)}, Rate: {metrics.get('fever_rate', 0):.2f}")
+            report.append(f"  Rash  - Avg: {metrics.get('rash_avg', 0):.2f}, Max: {metrics.get('rash_max', 0)}, Rate: {metrics.get('rash_rate', 0):.2f}")
+    
+    # Monkeypox section
+    report.append("\n\n" + "="*80)
+    report.append("MONKEYPOX OUTBREAK ANALYSIS")
+    report.append("="*80)
+    
+    if monkeypox_results.get('status') in ['no_data_found', 'no_states_identified']:
+        report.append(f"\n⚠️  Status: {monkeypox_results.get('status', 'unknown')}")
+    else:
+        report.append(f"\nOutbreak States: {', '.join(monkeypox_results.get('outbreak_states', []))}")
+        report.append(f"Control States: {', '.join(monkeypox_results.get('control_states', []))}")
+        
+        # Metrics summary
+        report.append("\n--- OUTBREAK STATES METRICS ---")
+        for state, metrics in monkeypox_results.get('outbreak_metrics', {}).items():
+            report.append(f"\n{state}:")
+            report.append(f"  Fever - Avg: {metrics.get('fever_avg', 0):.2f}, Max: {metrics.get('fever_max', 0)}, Rate: {metrics.get('fever_rate', 0):.2f}")
+            report.append(f"  Rash  - Avg: {metrics.get('rash_avg', 0):.2f}, Max: {metrics.get('rash_max', 0)}, Rate: {metrics.get('rash_rate', 0):.2f}")
+        
+        report.append("\n--- CONTROL STATES METRICS ---")
+        for state, metrics in monkeypox_results.get('control_metrics', {}).items():
+            report.append(f"\n{state}:")
+            report.append(f"  Fever - Avg: {metrics.get('fever_avg', 0):.2f}, Max: {metrics.get('fever_max', 0)}, Rate: {metrics.get('fever_rate', 0):.2f}")
+            report.append(f"  Rash  - Avg: {metrics.get('rash_avg', 0):.2f}, Max: {metrics.get('rash_max', 0)}, Rate: {metrics.get('rash_rate', 0):.2f}")
+    
+    # Comparative analysis
+    report.append("\n\n" + "="*80)
+    report.append("COMPARATIVE ANALYSIS")
+    report.append("="*80)
+    report.append("\nThis analysis compares symptom search trends (fever and rash) between:")
+    report.append("1. States with reported outbreaks")
+    report.append("2. Neighboring states without reported outbreaks")
+    report.append("\nKey metrics:")
+    report.append("- Average: Mean search interest (0-100 scale)")
+    report.append("- Max: Peak search interest")
+    report.append("- Rate: Daily rate of change in search interest")
+    report.append("\nNote: Higher rates and averages in outbreak states may indicate")
+    report.append("increased public concern or symptom prevalence prior to official announcements.")
+    
+    report.append("\n" + "="*80)
+    report.append(f"Data sources: {len(visited_urls)} unique URLs visited")
+    report.append("="*80)
+    
+    return "\n".join(report)
+
+
+def main():
+    """
+    Main execution function
+    """
+    print("\n" + "="*80)
+    print("OUTBREAK SYMPTOM TREND ANALYSIS")
+    print("Analyzing fever and rash search trends for measles and monkeypox outbreaks")
+    print("="*80)
+    
+    # Symptoms to analyze
+    symptoms = ['fever', 'rash']
+    
+    # Analyze measles
+    print("\n\n🔴 PART 1: MEASLES ANALYSIS")
+    measles_results = analyze_disease_outbreak('measles', symptoms)
+    
+    # Save intermediate results
+    with open('/home/claude/measles_results.json', 'w') as f:
+        json.dump(measles_results, f, indent=2, default=str)
+    print("\n💾 Measles results saved to measles_results.json")
+    
+    # Analyze monkeypox
+    print("\n\n🔴 PART 2: MONKEYPOX ANALYSIS")
+    monkeypox_results = analyze_disease_outbreak('monkeypox', symptoms)
+    
+    # Save intermediate results
+    with open('/home/claude/monkeypox_results.json', 'w') as f:
+        json.dump(monkeypox_results, f, indent=2, default=str)
+    print("\n💾 Monkeypox results saved to monkeypox_results.json")
+    
+    # Generate comprehensive report
+    print("\n\n📝 GENERATING FINAL REPORT...")
+    report = generate_report(measles_results, monkeypox_results)
+    
+    # Save report
+    with open('/home/claude/outbreak_analysis_report.txt', 'w') as f:
+        f.write(report)
+    
+    print(report)
+    print("\n\n💾 Full report saved to outbreak_analysis_report.txt")
+    
+    # Save trend data to CSV if available
+    if 'outbreak_trends_data' in measles_results and measles_results['outbreak_trends_data']:
+        measles_df = pd.DataFrame(measles_results['outbreak_trends_data'])
+        measles_df.to_csv('/home/claude/measles_trends.csv', index=False)
+        print("📊 Measles trend data saved to measles_trends.csv")
+    
+    if 'outbreak_trends_data' in monkeypox_results and monkeypox_results['outbreak_trends_data']:
+        monkeypox_df = pd.DataFrame(monkeypox_results['outbreak_trends_data'])
+        monkeypox_df.to_csv('/home/claude/monkeypox_trends.csv', index=False)
+        print("📊 Monkeypox trend data saved to monkeypox_trends.csv")
+    
+    print("\n✅ Analysis complete!")
+
+
+if __name__ == "__main__":
+    main()
