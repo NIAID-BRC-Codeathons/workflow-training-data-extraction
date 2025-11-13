@@ -12,11 +12,20 @@ from firecrawl import FirecrawlApp
 from pytrends.request import TrendReq
 import time
 import json
+import dotenv
+
+
+# get api-key from detenv or error
+FIRECRAWL_API_KEY = dotenv.get_key(dotenv.find_dotenv(), "FIRECRAWL_API_KEY")
+if not FIRECRAWL_API_KEY:
+    raise ValueError("FIRECRAWL_API_KEY not set in .env")
 
 # Configuration
 FIRECRAWL_CONFIG = {
-    "api_key": "fc-9b719a6c93df4442865d2eace08333d0"  # Replace with your API key
+    "api_key": FIRECRAWL_API_KEY
 }
+#    "api_key": "fc-9b719a6c93df4442865d2eace08333d0"  # Replace with your API key
+
 
 # Global list to track visited URLs
 visited_urls = []
@@ -61,11 +70,14 @@ def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = 
         # Reset alarm if we used it
         if use_timeout_signal:
             signal.alarm(0)
-        
-        print(search_response)
 
-        print(search_response.news)
-        print(search_response.web)
+        # write search_response.news to a json file
+        with open('./firecrawl_news_response.json', 'w') as f:
+            json.dump(search_response.news, f, indent=2, default=str)
+        
+        # write search_response.web to a json file
+        with open('./firecrawl_web_response.json', 'w') as f:
+            json.dump(search_response.web, f, indent=2, default=str)
 
         # Get data items based on the response structure
         if hasattr(search_response, 'data'):
