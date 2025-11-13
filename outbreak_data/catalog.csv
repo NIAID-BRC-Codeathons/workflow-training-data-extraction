@@ -1,0 +1,2 @@
+filename,description
+health_data.json,"Global disease outbreak surveillance data containing geographic markers, alert IDs, and HTML-formatted outbreak information for various diseases including influenza, dengue, COVID-19, avian flu, measles, and other infectious diseases across multiple countries and regions. Data includes location coordinates, timestamps, news sources, and outbreak details."

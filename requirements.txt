@@ -3,3 +3,6 @@ rich
 openai
 requests
 dotenv
+firecrawl
+pandas
+pytrends
