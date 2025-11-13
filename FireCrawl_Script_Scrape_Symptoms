@@ -64,29 +64,40 @@ def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = 
             timeout= 30000,
             limit = num_results,
             scrape_options = {'formats': ['markdown']}
-            
         )
         
         # Reset alarm if we used it
         if use_timeout_signal:
             signal.alarm(0)
 
-        # write search_response.news to a json file
-        with open('./firecrawl_news_response.json', 'w') as f:
-            json.dump(search_response.news, f, indent=2, default=str)
+        # Handle different response structures
+        data_items = []
         
-        # write search_response.web to a json file
-        with open('./firecrawl_web_response.json', 'w') as f:
-            json.dump(search_response.web, f, indent=2, default=str)
-
-        # Get data items based on the response structure
-        if hasattr(search_response, 'data'):
+        # Check if search_response is a list
+        if isinstance(search_response, list):
+            data_items = search_response
+        # Check if it has a 'data' attribute or key
+        elif hasattr(search_response, 'data'):
             data_items = search_response.data
         elif isinstance(search_response, dict) and 'data' in search_response:
             data_items = search_response['data']
+        # Check for 'web' attribute (older API structure)
+        elif hasattr(search_response, 'web'):
+            data_items = search_response.web
+            # Try to save news and web responses if they exist
+            try:
+                with open('./firecrawl_news_response.json', 'w') as f:
+                    json.dump(search_response.news, f, indent=2, default=str)
+                with open('./firecrawl_web_response.json', 'w') as f:
+                    json.dump(search_response.web, f, indent=2, default=str)
+            except:
+                pass
+        # Check for 'results' key
+        elif isinstance(search_response, dict) and 'results' in search_response:
+            data_items = search_response['results']
         else:
-            print(f"⚠️  Unexpected response format: {type(search_response)}")
-            data_items = []
+            # Try to use the response directly
+            data_items = [search_response] if search_response else []
             
         # Check if we have results
         if not search_response or len(data_items) == 0:
@@ -97,16 +108,52 @@ def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = 
         formatted_results = []
         
         for item in data_items:
-            # Extract URL
-            url = item.url if hasattr(item, 'url') else item.get('url', '')
+            # Handle both object and dict structures
+            if hasattr(item, '__dict__'):
+                # Convert object to dict for easier handling
+                item_dict = item.__dict__ if hasattr(item, '__dict__') else {}
+            elif isinstance(item, dict):
+                item_dict = item
+            else:
+                continue
             
-            # Extract markdown content
-            content = item.markdown if hasattr(item, 'markdown') else item.get('markdown', '')
-            if not content:
-                content = item.content if hasattr(item, 'content') else item.get('content', '')
+            # Extract URL - try multiple possible field names
+            url = ''
+            for field in ['url', 'link', 'href']:
+                if hasattr(item, field):
+                    url = getattr(item, field)
+                    break
+                elif isinstance(item_dict, dict) and field in item_dict:
+                    url = item_dict[field]
+                    break
             
-            # Get title
-            title = item.title if hasattr(item, 'title') else item.get('title', url)
+            # Extract content - try multiple possible field names
+            content = ''
+            for field in ['markdown', 'content', 'text', 'description', 'snippet']:
+                if hasattr(item, field):
+                    content = getattr(item, field) or ''
+                    if content:
+                        break
+                elif isinstance(item_dict, dict) and field in item_dict:
+                    content = item_dict[field] or ''
+                    if content:
+                        break
+            
+            # Get title - try multiple possible field names
+            title = ''
+            for field in ['title', 'name', 'headline']:
+                if hasattr(item, field):
+                    title = getattr(item, field) or ''
+                    if title:
+                        break
+                elif isinstance(item_dict, dict) and field in item_dict:
+                    title = item_dict[field] or ''
+                    if title:
+                        break
+            
+            # Use URL as title if no title found
+            if not title and url:
+                title = url
             
             formatted_results.append({
                 "title": title,
@@ -564,7 +611,7 @@ def main():
     measles_results = analyze_disease_outbreak('measles', symptoms)
     
     # Save intermediate results
-    with open('/home/claude/measles_results.json', 'w') as f:
+    with open('measles_results.json', 'w') as f:
         json.dump(measles_results, f, indent=2, default=str)
     print("\n💾 Measles results saved to measles_results.json")
     
@@ -573,7 +620,7 @@ def main():
     monkeypox_results = analyze_disease_outbreak('monkeypox', symptoms)
     
     # Save intermediate results
-    with open('/home/claude/monkeypox_results.json', 'w') as f:
+    with open('monkeypox_results.json', 'w') as f:
         json.dump(monkeypox_results, f, indent=2, default=str)
     print("\n💾 Monkeypox results saved to monkeypox_results.json")
     
@@ -582,7 +629,7 @@ def main():
     report = generate_report(measles_results, monkeypox_results)
     
     # Save report
-    with open('/home/claude/outbreak_analysis_report.txt', 'w') as f:
+    with open('outbreak_analysis_report.txt', 'w') as f:
         f.write(report)
     
     print(report)
@@ -591,12 +638,12 @@ def main():
     # Save trend data to CSV if available
     if 'outbreak_trends_data' in measles_results and measles_results['outbreak_trends_data']:
         measles_df = pd.DataFrame(measles_results['outbreak_trends_data'])
-        measles_df.to_csv('/home/claude/measles_trends.csv', index=False)
+        measles_df.to_csv('measles_trends.csv', index=False)
         print("📊 Measles trend data saved to measles_trends.csv")
     
     if 'outbreak_trends_data' in monkeypox_results and monkeypox_results['outbreak_trends_data']:
         monkeypox_df = pd.DataFrame(monkeypox_results['outbreak_trends_data'])
-        monkeypox_df.to_csv('/home/claude/monkeypox_trends.csv', index=False)
+        monkeypox_df.to_csv('monkeypox_trends.csv', index=False)
         print("📊 Monkeypox trend data saved to monkeypox_trends.csv")
     
     print("\n✅ Analysis complete!")
