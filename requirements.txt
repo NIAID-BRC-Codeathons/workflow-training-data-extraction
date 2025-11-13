@@ -3,3 +3,4 @@ rich
 openai
 requests
 dotenv
+firecrawl
