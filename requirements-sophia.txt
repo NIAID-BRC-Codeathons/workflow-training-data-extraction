@@ -1,0 +1,15 @@
+# Requirements for Sophia PDF Analyzer
+# Install with: pip install -r requirements-sophia.txt
+
+# Core dependencies
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# PDF processing
+PyMuPDF>=1.23.0  # fitz module for PDF extraction
+
+# Image processing
+Pillow>=10.0.0
+
+# Optional but recommended
+# tqdm>=4.66.0  # Progress bars for batch processing
