@@ -99,10 +99,6 @@ def get_llm_client(service: str, **kwargs):
         return OpenAIClient(api_key="CELS", api_base="http://195.88.24.64:80/v1", **kwargs)
     elif service == "deepseek":
         return OpenAIClient(api_key="CELS", api_base="http://66.55.67.65:80/v1", **kwargs)
-    elif service == "globus":
-        from inference_auth_token import get_access_token
-        access_token = get_access_token()
-        return OpenAIClient(api_key=access_token, api_base="https://data-portal-dev.cels.anl.gov/resource_server/sophia/vllm/v1", **kwargs)
     elif service == "argo":
         return ArgoClient(**kwargs)
     else:
