@@ -274,7 +274,7 @@ def parse_risk_result(risk_text: str) -> str:
 
 def detect_disease(
     MMWR: str,
-    service: str = "globus",
+    service: str = "argo",
     model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct",
     num_iterations: int = 1,
     temperature: float = 0.0,
@@ -342,7 +342,7 @@ def detect_disease(
 
 
 if __name__ == '__main__':
-    detect_disease("mm6711", service="globus", model="meta-llama/Meta-Llama-3.1-405B-Instruct", num_iterations=5, temperature=0.0, top_p=0.01)
+    detect_disease("mm6711", service="argo", model="meta-llama/Meta-Llama-3.1-405B-Instruct", num_iterations=5, temperature=0.0, top_p=0.01)
     # detect_disease("mm6711", service="argo", model="gpt4o", num_iterations=5, temperature=0.0, top_p=0.01)
     # detect_disease("mm6901", service="llama", model='meta-llama/Llama-3.3-70B-Instruct', num_iterations=1, temperature=0.0)
     # detect_disease("mm6901", service="deepseek", model='deepseekV3', num_iterations=1, temperature=0.0)

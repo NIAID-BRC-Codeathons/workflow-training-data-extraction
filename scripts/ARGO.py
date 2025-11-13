@@ -10,17 +10,14 @@ MODEL_GPT35 = "gpt35"
 MODEL_GPT4 = "gpt4"
 MODEL_GPT4T = "gpt4turbo"
 
-class ArgoWrapper:
-    default_url = 'https://apps.inside.anl.gov/argoapi/api/v1/resource/chat/'
-    # default_url = 'https://apps-test.inside.anl.gov/argoapi/api/v1/resource/chat/'
+DEFAULT_ARGO_URL = 'http://lambda5.cels.anl.gov:44497/v1/chat'
 
+class ArgoWrapper:
     def __init__(self, 
                  url = None, 
                  model = "gpt4o", 
                  user = 'tandoc')-> None:
-        self.url = url
-        if self.url is None:
-            self.url = ArgoWrapper.default_url
+        self.url = url if url else DEFAULT_ARGO_URL
         self.model = model
         self.user = user
 
@@ -48,13 +45,11 @@ class ArgoWrapper:
             parsed = json.loads(response.text)
             return parsed
         else:
-            raise Exception(f"Request failed with status code: {response.status_code}")
+            raise Exception(f"Request to {self.url} failed with status code: {response.status_code} and message: {response.text}")
 
 class ArgoEmbeddingWrapper:
-    default_url = "https://apps-dev.inside.anl.gov/argoapi/api/v1/resource/embed/"
-
     def __init__(self, url = None, user = os.getenv("USER")) -> None:
-        self.url = url if url else ArgoEmbeddingWrapper.default_url
+        self.url = url if url else DEFAULT_ARGO_URL
         self.user = user
         #self.argo_embedding_wrapper = argo_embedding_wrapper
 
