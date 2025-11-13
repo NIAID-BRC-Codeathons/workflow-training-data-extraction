@@ -15,7 +15,8 @@
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "ms-python.black-formatter"
+        "ms-python.black-formatter",
+        "rooveterinaryinc.roo-cline"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
