@@ -13,6 +13,8 @@ from pytrends.request import TrendReq
 import time
 import json
 import dotenv
+from firecrawl_response_formatter import format_response
+from data_repository_writer import write_to_repository
 
 
 # get api-key from detenv or error
@@ -24,11 +26,6 @@ if not FIRECRAWL_API_KEY:
 FIRECRAWL_CONFIG = {
     "api_key": FIRECRAWL_API_KEY
 }
-#    "api_key": "fc-9b719a6c93df4442865d2eace08333d0"  # Replace with your API key
-
-
-# Global list to track visited URLs
-visited_urls = []
 
 # Timeout handler for searches
 def timeout_handler(signum, frame):
@@ -56,7 +53,7 @@ def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = 
         if use_timeout_signal:
             # Set timeout handler
             signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(30)  # 30 second timeout
+            signal.alarm(120)  # 30 second timeout
         
         # Execute search with Firecrawl
         search_response = firecrawl_app.search(
@@ -65,111 +62,13 @@ def execute_search(query: str, num_results: int = 5, use_timeout_signal: bool = 
             limit = num_results,
             scrape_options = {'formats': ['markdown']}
         )
-        
-        # Reset alarm if we used it
-        if use_timeout_signal:
-            signal.alarm(0)
 
-        # Handle different response structures
-        data_items = []
-        
-        # Check if search_response is a list
-        if isinstance(search_response, list):
-            data_items = search_response
-        # Check if it has a 'data' attribute or key
-        elif hasattr(search_response, 'data'):
-            data_items = search_response.data
-        elif isinstance(search_response, dict) and 'data' in search_response:
-            data_items = search_response['data']
-        # Check for 'web' attribute (older API structure)
-        elif hasattr(search_response, 'web'):
-            data_items = search_response.web
-            # Try to save news and web responses if they exist
-            try:
-                with open('./firecrawl_news_response.json', 'w') as f:
-                    json.dump(search_response.news, f, indent=2, default=str)
-                with open('./firecrawl_web_response.json', 'w') as f:
-                    json.dump(search_response.web, f, indent=2, default=str)
-            except:
-                pass
-        # Check for 'results' key
-        elif isinstance(search_response, dict) and 'results' in search_response:
-            data_items = search_response['results']
-        else:
-            # Try to use the response directly
-            data_items = [search_response] if search_response else []
-            
-        # Check if we have results
-        if not search_response or len(data_items) == 0:
-            print(f"❌ No results found for query: {query}")
-            return []
-        
-        # Process results
-        formatted_results = []
-        
-        for item in data_items:
-            # Handle both object and dict structures
-            if hasattr(item, '__dict__'):
-                # Convert object to dict for easier handling
-                item_dict = item.__dict__ if hasattr(item, '__dict__') else {}
-            elif isinstance(item, dict):
-                item_dict = item
-            else:
-                continue
-            
-            # Extract URL - try multiple possible field names
-            url = ''
-            for field in ['url', 'link', 'href']:
-                if hasattr(item, field):
-                    url = getattr(item, field)
-                    break
-                elif isinstance(item_dict, dict) and field in item_dict:
-                    url = item_dict[field]
-                    break
-            
-            # Extract content - try multiple possible field names
-            content = ''
-            for field in ['markdown', 'content', 'text', 'description', 'snippet']:
-                if hasattr(item, field):
-                    content = getattr(item, field) or ''
-                    if content:
-                        break
-                elif isinstance(item_dict, dict) and field in item_dict:
-                    content = item_dict[field] or ''
-                    if content:
-                        break
-            
-            # Get title - try multiple possible field names
-            title = ''
-            for field in ['title', 'name', 'headline']:
-                if hasattr(item, field):
-                    title = getattr(item, field) or ''
-                    if title:
-                        break
-                elif isinstance(item_dict, dict) and field in item_dict:
-                    title = item_dict[field] or ''
-                    if title:
-                        break
-            
-            # Use URL as title if no title found
-            if not title and url:
-                title = url
-            
-            formatted_results.append({
-                "title": title,
-                "url": url,
-                "source": url.split("//")[-1].split("/")[0] if "//" in url else "unknown",
-                "snippet": content[:500] + "..." if len(content) > 500 else content,
-                "content": content,
-                "query": query
-            })
+        formatted_results = format_response(query, search_response)
         
         print(f"✅ Found {len(formatted_results)} results from Firecrawl")
         
-        # Track visited URLs globally
-        global visited_urls
-        visited_urls.extend([item["url"] for item in formatted_results if item["url"]])
-        
+        write_to_repository(formatted_results)
+
         return formatted_results
         
     except TimeoutError:
@@ -224,17 +123,14 @@ def extract_outbreak_info(results: List[Dict[str, Any]], disease: str) -> List[D
     
     for result in results:
         content = result.get('content', '').lower()
-        title = result.get('title', '').lower()
         
         # Find mentioned states
-        mentioned_states = [state for state in us_states if state.lower() in content or state.lower() in title]
+        mentioned_states = [state for state in us_states if state.lower() in content]
         
         if mentioned_states:
             outbreak_info = {
                 'disease': disease,
                 'states': mentioned_states,
-                'url': result.get('url', ''),
-                'title': result.get('title', ''),
                 'snippet': result.get('snippet', ''),
                 'content_preview': content[:1000]
             }
@@ -278,7 +174,9 @@ def analyze_google_trends(
     symptoms: List[str],
     states: List[str],
     end_date: datetime,
-    days_before: int = 7
+    days_before: int = 7,
+    max_retries: int = 5,
+    initial_delay: int = 30
 ) -> pd.DataFrame:
     """
     Analyze Google Trends data for symptoms in specific states
@@ -288,12 +186,15 @@ def analyze_google_trends(
         states: List of US states (2-letter codes or full names)
         end_date: End date for the analysis (typically outbreak announcement date)
         days_before: Number of days before end_date to analyze
+        max_retries: Maximum number of retry attempts for rate-limited requests
+        initial_delay: Initial delay in seconds between requests
     
     Returns:
         DataFrame with trend data
     """
     print(f"\n📊 Analyzing Google Trends for {symptoms} in {states}")
     print(f"   Period: {days_before} days before {end_date.strftime('%Y-%m-%d')}")
+    print(f"   ⚠️  Note: Google Trends has strict rate limits. This may take several minutes...")
     
     # Convert state names to 2-letter codes if needed
     state_code_map = {
@@ -316,52 +217,82 @@ def analyze_google_trends(
     start_date = end_date - timedelta(days=days_before)
     timeframe = f"{start_date.strftime('%Y-%m-%d')} {end_date.strftime('%Y-%m-%d')}"
     
-    # Initialize pytrends
-    pytrends = TrendReq(hl='en-US', tz=360)
+    # Initialize pytrends with timeout
+    pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 30))
     
     all_data = []
     
-    for state in states:
+    for i, state in enumerate(states):
         # Convert to state code if needed
         state_code = state_code_map.get(state, state)
         if not state_code.startswith('US-'):
             state_code = f"US-{state_code}"
         
-        try:
-            print(f"   Fetching data for {state} ({state_code})...")
-            
-            # Build payload for this state
-            pytrends.build_payload(
-                symptoms,
-                cat=0,
-                timeframe=timeframe,
-                geo=state_code,
-                gprop=''
-            )
-            
-            # Get interest over time
-            interest_df = pytrends.interest_over_time()
-            
-            if not interest_df.empty:
-                # Remove 'isPartial' column if present
-                if 'isPartial' in interest_df.columns:
-                    interest_df = interest_df.drop('isPartial', axis=1)
+        # Retry logic with exponential backoff
+        retry_count = 0
+        delay = initial_delay
+        success = False
+        
+        while retry_count < max_retries and not success:
+            try:
+                # Add a pre-request delay to avoid immediate rate limiting
+                if retry_count == 0 and i > 0:
+                    # Progressive delay between states
+                    wait_time = min(initial_delay + (i * 10), 60)  # Cap at 60 seconds
+                    print(f"   ⏳ Waiting {wait_time} seconds before fetching {state}...")
+                    time.sleep(wait_time)
                 
-                # Add state information
-                interest_df['state'] = state
-                interest_df['state_code'] = state_code
-                interest_df.reset_index(inplace=True)
+                print(f"   Fetching data for {state} ({state_code})...")
                 
-                all_data.append(interest_df)
-            else:
-                print(f"   ⚠️  No data available for {state}")
-            
-            # Rate limiting
-            time.sleep(2)
-            
-        except Exception as e:
-            print(f"   ❌ Error fetching data for {state}: {e}")
-            continue
+                # Build payload for this state
+                pytrends.build_payload(
+                    symptoms,
+                    cat=0,
+                    timeframe=timeframe,
+                    geo=state_code,
+                    gprop=''
+                )
+                
+                # Get interest over time
+                interest_df = pytrends.interest_over_time()
+                
+                if not interest_df.empty:
+                    # Remove 'isPartial' column if present
+                    if 'isPartial' in interest_df.columns:
+                        interest_df = interest_df.drop('isPartial', axis=1)
+                    
+                    # Add state information
+                    interest_df['state'] = state
+                    interest_df['state_code'] = state_code
+                    interest_df.reset_index(inplace=True)
+                    
+                    all_data.append(interest_df)
+                    print(f"   ✅ Successfully fetched data for {state}")
+                else:
+                    print(f"   ⚠️  No data available for {state}")
+                
+                success = True
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Check if it's a rate limit error (429)
+                if '429' in error_msg or 'rate' in error_msg.lower() or 'too many' in error_msg.lower():
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        # Use longer delays for retries
+                        retry_delay = delay * (2 ** retry_count)  # Exponential backoff
+                        print(f"   ⚠️  Rate limited for {state}. Waiting {retry_delay} seconds before retry {retry_count}/{max_retries}...")
+                        time.sleep(retry_delay)
+                    else:
+                        print(f"   ❌ Max retries reached for {state}. Skipping...")
+                        # Add a cooldown period even after max retries
+                        print(f"   ⏳ Cooling down for 60 seconds...")
+                        time.sleep(60)
+                else:
+                    # For other errors, just log and continue
+                    print(f"   ❌ Error fetching data for {state}: {e}")
+                    break
     
     if all_data:
         combined_df = pd.concat(all_data, ignore_index=True)
@@ -380,6 +311,10 @@ def calculate_trend_metrics(df: pd.DataFrame, symptoms: List[str]) -> Dict[str, 
     - Peak values
     """
     metrics = {}
+    
+    # Check if DataFrame is empty
+    if df.empty or 'state' not in df.columns:
+        return metrics
     
     for state in df['state'].unique():
         state_data = df[df['state'] == state].copy()
@@ -420,13 +355,28 @@ def compare_outbreak_vs_control(
     print(f"   Outbreak states: {outbreak_states}")
     print(f"   Control states: {control_states}")
     
-    # Get trends for outbreak states
+    # Get trends for outbreak states with enhanced retry logic
     print("\n📈 Fetching data for OUTBREAK states...")
-    outbreak_trends = analyze_google_trends(symptoms, outbreak_states, outbreak_date, days_before)
+    print("   ⚠️  Google Trends has very strict rate limits. This process may take 5-10 minutes.")
+    outbreak_trends = analyze_google_trends(
+        symptoms,
+        outbreak_states,
+        outbreak_date,
+        days_before,
+        max_retries=5,
+        initial_delay=30
+    )
     
-    # Get trends for control states
+    # Get trends for control states with enhanced retry logic
     print("\n📈 Fetching data for CONTROL states...")
-    control_trends = analyze_google_trends(symptoms, control_states, outbreak_date, days_before)
+    control_trends = analyze_google_trends(
+        symptoms,
+        control_states,
+        outbreak_date,
+        days_before,
+        max_retries=5,
+        initial_delay=30
+    )
     
     # Calculate metrics
     outbreak_metrics = calculate_trend_metrics(outbreak_trends, symptoms)
@@ -476,8 +426,6 @@ def analyze_disease_outbreak(disease: str, symptoms: List[str] = ['fever', 'rash
     print(f"\n✅ Found {len(outbreaks)} potential outbreak reports:")
     for i, outbreak in enumerate(outbreaks[:5], 1):  # Show first 5
         print(f"\n   {i}. States: {outbreak['states']}")
-        print(f"      Title: {outbreak['title'][:100]}...")
-        print(f"      URL: {outbreak['url']}")
     
     # Get unique outbreak states
     outbreak_states = list(set([state for outbreak in outbreaks for state in outbreak['states']]))
@@ -491,26 +439,33 @@ def analyze_disease_outbreak(disease: str, symptoms: List[str] = ['fever', 'rash
         control_states.extend([n for n in neighbors if n not in outbreak_states])
     
     control_states = list(set(control_states))[:5]  # Limit to 5 control states
+    
+    # If no control states found, use some default states that are likely not in outbreak
+    if not control_states:
+        # Use states that are geographically diverse and less likely to all have outbreaks
+        all_states = ['Montana', 'North Dakota', 'Wyoming', 'Vermont', 'Maine', 'Alaska', 'Hawaii']
+        control_states = [s for s in all_states if s not in outbreak_states][:5]
+    
     print(f"🎯 Selected control states: {control_states}")
     
     # Step 4: Analyze trends
     # Use current date minus a few days as proxy for "outbreak announcement"
     outbreak_date = datetime.now() - timedelta(days=7)
     
-    print(f"\n📊 Step 3: Analyzing Google Trends data...")
-    comparison = compare_outbreak_vs_control(
-        outbreak_states[:5],  # Limit to 5 outbreak states
-        control_states,
-        symptoms,
-        outbreak_date,
-        days_before=7
-    )
+    # print(f"\n📊 Step 3: Analyzing Google Trends data...")
+    # comparison = compare_outbreak_vs_control(
+    #     outbreak_states[:5],  # Limit to 5 outbreak states
+    #     control_states,
+    #     symptoms,
+    #     outbreak_date,
+    #     days_before=7
+    # )
     
-    # Add outbreak details to comparison
-    comparison['disease'] = disease
-    comparison['outbreak_details'] = outbreaks[:5]
+    # # Add outbreak details to comparison
+    # comparison['disease'] = disease
+    # comparison['outbreak_details'] = outbreaks[:5]
     
-    return comparison
+    # return comparison
 
 
 def generate_report(measles_results: Dict[str, Any], monkeypox_results: Dict[str, Any]) -> str:
@@ -588,8 +543,6 @@ def generate_report(measles_results: Dict[str, Any], monkeypox_results: Dict[str
     report.append("increased public concern or symptom prevalence prior to official announcements.")
     
     report.append("\n" + "="*80)
-    report.append(f"Data sources: {len(visited_urls)} unique URLs visited")
-    report.append("="*80)
     
     return "\n".join(report)
 

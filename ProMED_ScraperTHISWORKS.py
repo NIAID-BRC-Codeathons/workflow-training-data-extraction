@@ -7,11 +7,13 @@ Advanced version with better date filtering, disease analysis, and reporting
 import os
 import json
 import re
-from firecrawl_response_formatter import format_response
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Set
 from collections import defaultdict, Counter
 import signal
+
+from firecrawl_response_formatter import format_response
+from data_repository_writer import write_to_repository
 
 from firecrawl import FirecrawlApp
 import dotenv
@@ -204,6 +206,8 @@ class ProMEDScraper:
         for i, query in enumerate(search_queries, 1):
             print(f"Query {i}/{len(search_queries)}:")
             results = self.search(query, num_results=max_results_per_query)
+            
+            write_to_repository(results)
             
             # Filter by date
             filtered_results = [

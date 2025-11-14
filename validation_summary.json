@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "generated": "2025-11-14 16:20:38 UTC",
+    "type": "final_validation_report",
+    "sources": {
+      "outbreak_report": "potential_outbreaks.md",
+      "devils_advocate": "devils_advocate_analysis.md",
+      "validation_results": "validation_results.json",
+      "crawled_data": "outbreak_data"
+    }
+  },
+  "report_location": "final_outbreak_validation_report.md",
+  "status": "completed"
+}
