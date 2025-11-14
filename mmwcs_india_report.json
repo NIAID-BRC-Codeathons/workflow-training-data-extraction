@@ -1,0 +1,18 @@
+{
+  "report_metadata": {
+    "generated_date": "2025-11-14T16:51:49.515310",
+    "total_entries": 0
+  },
+  "statistics": {
+    "disease_risks_count": {},
+    "locations_count": {},
+    "weeks_count": {}
+  },
+  "detailed_entries": {
+    "disease_risks": [],
+    "locations": [],
+    "dates_identified": [],
+    "weeks": [],
+    "cases": []
+  }
+}

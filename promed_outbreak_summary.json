@@ -1,0 +1,21 @@
+{
+  "report_date": "2025-11-13T20:49:50.041513",
+  "date_range": [
+    "2025-05-17",
+    "2025-11-13"
+  ],
+  "statistics": {
+    "total_reports": 0,
+    "human_outbreaks": 0,
+    "animal_outbreaks": 0,
+    "zoonotic_outbreaks": 0,
+    "unique_urls": 0
+  },
+  "outbreaks_by_category": {
+    "human_outbreaks": [],
+    "animal_outbreaks": [],
+    "zoonotic_outbreaks": []
+  },
+  "detailed_reports": {},
+  "most_reported_diseases": {}
+}
